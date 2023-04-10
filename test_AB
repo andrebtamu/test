@@ -1,0 +1,346 @@
+%LIMITATIONS:
+% if number of plies is odd, enter all plies manually
+% only takes laminates with uniform thickness plies
+
+%%%%%%%%%%%%%%%%%USER INPUTS%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+mat_select = "T300/5208"; % material selected for calculations
+t_ply = 0.005; % ply thickness input (in)
+lam_ply = [0 45 -45 90 0 45 -45 90 90 -45 45 0 90 -45 45 0]; % initialize list of ply orientations
+num_ply = length(lam_ply); % total number of laminate plies
+Nxx = 10000; %lb/in
+Nyy = 0; %lb/in
+Nxy = 0; %lb/in
+Mxx = 100; %lb/in
+Myy = 0; %lb/in
+Mxy = 0; %lb/in
+analysis_type = "Tsai-Wu";
+%%%%%%%%%%%%%%%%%%%%%%%%MATERIAL DATA%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+materials = ["T300/5208","AS/3501","Scotchply 1002","B(4)/5505", "Kevlar49/Epoxy"]; % list of possible materials
+
+% order of properties psi (E11,E22,G12,v12,v21,Q11,Q22,Q12,Q66)
+if mat_select == materials(1) % T300/5208
+    mat_prop = [(26.25*(10^6)) (1.49*(10^6)) (1.04*(10^6)) 0.28 0.016 (26.37*(10^6)) (1.5*(10^6)) (0.42*(10^6)) (1.04*(10^6))];
+elseif mat_select == materials(2) % AS/3501
+    mat_prop = [(20.01*(10^6)) (1.3*(10^6)) (1.03*(10^6)) 0.3 0.019 (20.13*(10^6)) (1.31*(10^6)) (0.392*(10^6)) (1.03*(10^6))];
+elseif mat_select == materials(3) % Scotchply 1002
+    mat_prop = [(5.6*(10^6)) (1.2*(10^6)) (0.6*(10^6)) 0.26 0.056 (5.68*(10^6)) (1.22*(10^6)) (0.316*(10^6)) (0.6*(10^6))];
+elseif mat_select == materials(4) % B(4)/5505
+    mat_prop = [(29.59*(10^6)) (2.68*(10^6)) (0.81*(10^6)) 0.23 0.021 (29.73*(10^6)) (2.69*(10^6)) (0.62*(10^6)) (0.84*(10^6))];
+elseif mat_select == materials(5) % Kevlar49/Epoxy Aramid
+    mat_prop = [(11.02*(10^6)) (0.8*(10^6)) (0.33*(10^6)) 0.34 0.025 (11.12*(10^6)) (0.804*(10^6)) (0.274*(10^6)) (0.333*(10^6))];
+end
+
+% order of strengths psi (vf, Slt, Slc, Stt, Stc, Slts)
+if mat_select == materials(1) % T300/5208
+    mat_strengths = [0.7 217500 217500 5800 35700 9860];
+elseif mat_select == materials(2) % AS/3501
+    mat_strengths = [0.66 209900 209900 7500 29900 13500];
+elseif mat_select == materials(3) % Scotchply 1002
+    mat_strengths = [0.45 154000 88500 4500 17100 10400];
+elseif mat_select == materials(4) % B(4)/5505
+    mat_strengths = [0.5 182700 362500 8850 29300 9720];
+elseif mat_select == materials(5) % Kevlar49/Epoxy Aramid
+    mat_strengths = [0.6 203000 34100 1740 7690 4930];
+end
+
+%%%%%%%%%%%%%%%%% CONSTANT VARIABLES BASED ON INPUTS%%%%%%%%%%%%%%%%%%%%%%%
+
+ply_orientations = ((2*pi)/360) * lam_ply; % converts list of ply orientations to radians
+t_list = ones(1,num_ply) * t_ply; % list of ply thicknesses
+
+% the following block is used to calculate ply distances from mid plane
+total_thickness = sum(t_list);
+half_thickness = total_thickness/2;
+len_whole = length(t_list);
+
+z_list = [];
+
+for i = 1:len_whole + 1 % creates list of z distances 
+    dist = -half_thickness + ((i-1)*t_ply);
+    z_list = [z_list,dist];
+end
+
+zlist_squared = [];
+
+for i = 1:length(z_list) % creates list of z distances squared
+    z_squared = (z_list(i))^2;
+    zlist_squared = [zlist_squared, z_squared];
+end
+
+zsquarediff_list = [];
+
+for i = 1:num_ply % creates list of differences of z squares for calculating B matrix
+    zsquare_ply = zlist_squared(i+1) - zlist_squared(i);
+    zsquarediff_list = [zsquarediff_list, zsquare_ply];
+end
+
+zlist_cubed = [];
+
+for i = 1:length(z_list) % creates list of z distances cubed
+    z_cubed = (z_list(i))^3;
+    zlist_cubed = [zlist_cubed, z_cubed];
+end
+
+zcubediff_list = [];
+
+for i = 1:num_ply % creates list of differences of z cubes for calculating D matrix
+    zcube_ply = zlist_cubed(i+1) - zlist_cubed(i);
+    zcubediff_list = [zcubediff_list, zcube_ply];
+end
+
+% the following variables are initialized and will NOT be ierated
+loads = [Nxx;Nyy;Nxy;Mxx;Myy;Mxy];
+Q = [mat_prop(6) mat_prop(8) 0;
+     mat_prop(8) mat_prop(7) 0;
+     0 0 mat_prop(9)];
+ply_list = 1:num_ply;
+
+% the following are initialzed and WILL be iterated on
+ply_iter = 1;
+b_k = ones(1, num_ply);
+displam_ply = [];
+
+for i = 1:num_ply
+    displam_new = string() + num2str(lam_ply(i));
+    displam_ply = [displam_ply, displam_new];
+end
+%%%%%%%%%%%%%%%%%%% START FAILURE ANALYSIS LOOP %%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+Qbar_array = Qbar_Matrices(Q,ply_orientations,b_k,ply_iter, num_ply);
+A = A_matrix(Qbar_array, num_ply, t_ply);
+B = B_matrix(Qbar_array, num_ply, zsquarediff_list);
+D = D_matrix(Qbar_array, num_ply, zcubediff_list);
+lam_midstrains = midPlain_strain(A,B,D,loads);
+lam_curvatures = curvatures(A,B,D,loads);
+% tracks local stresses for each ply
+[sig11_list, sig22_list, tau12_list] = local_stresses(num_ply,t_ply,lam_midstrains,lam_curvatures,Q,ply_orientations);
+
+
+Rply_list = []; % tracks R value for each ply
+if analysis_type == "Tsai-Wu"
+    for i = 1:num_ply
+        R_value = tsai_wu(sig11_list(i),sig22_list(i),tau12_list(i),mat_strengths(3),mat_strengths(2),mat_strengths(5),mat_strengths(4),mat_strengths(6));
+        Rply_list = [Rply_list, R_value];
+    end
+elseif analysis_type == "Max-Stress"
+    for i = 1:num_ply
+        R_value = maxstress_failure(sig11_list(i),sig22_list(i),tau12_list(i),mat_strengths(3),mat_strengths(2),mat_strengths(5),mat_strengths(4),mat_strengths(6));
+        Rply_list = [Rply_list, R_value];
+    end
+end
+
+[R_min, min_idx, crit_Nxx, crit_Mxx] = crit_values(Rply_list,loads(1),loads(4));
+
+display_output(num_ply,Rply_list,lam_ply,displam_ply, crit_Nxx, crit_Mxx,ply_iter)
+
+% creating next iteration after cancellation of lowest R ply
+for i = 1:num_ply % loop for replacing the angle display with *
+    if ismember(ply_list(i), min_idx)
+        displam_ply(i) = '*';
+    end
+end
+
+for i = 1:num_ply % loop for editing the b_k with a 0
+    if displam_ply(i) == '*'
+       
+    end
+end
+
+%%%%%%%%%%%%%%%%%%% END FAILURE ANALYSIS LOOP %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%% FUNCTIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+function [Qbar_array] = Qbar_Matrices(Q,ply_orientations,b_k,ply_iter, num_ply)
+    Qbar_array = zeros(3,3,num_ply);
+    for i = 1:num_ply
+        theta = ply_orientations(i);
+        T = [(cos(theta))^2 (sin(theta))^2 2*sin(theta)*cos(theta);
+            (sin(theta))^2 (cos(theta))^2 -2*sin(theta)*cos(theta);
+            -sin(theta)*cos(theta) sin(theta)*cos(theta) ((cos(theta))^2)-(sin(theta))^2];
+    
+        Ts = [(cos(theta))^2 (sin(theta))^2 sin(theta)*cos(theta);
+        (sin(theta))^2 (cos(theta))^2 -sin(theta)*cos(theta);
+        -2*sin(theta)*cos(theta) 2*sin(theta)*cos(theta) ((cos(theta))^2)-(sin(theta))^2];
+    
+        Qbar_arraynew = T^(-1) * Q * Ts * b_k(ply_iter);
+        Qbar_array(:,:,i) = Qbar_arraynew;
+    end
+end
+
+
+function [A] = A_matrix(Qbar_array, num_ply, t_ply)
+    A = ones(3,3, 1);
+    for i = 1:3 % calculate A matrix
+        for j = 1:3
+                A_new = sum(Qbar_array(i,j,1:num_ply)) * (t_ply);
+                A_new = round(A_new,8);
+                A(i,j,1) = A_new;
+        end
+    end
+end
+
+
+function [B] = B_matrix(Qbar_array, num_ply, zsquarediff_list)
+    B = ones(3,3, 1);
+    for i = 1:3 % calculate B matrix
+        for j = 1:3
+            B_element = [];
+            for z = 1:num_ply
+                B_part = (1/2) * Qbar_array(i,j,z) * (zsquarediff_list(z));
+                B_element = [B_element, B_part];
+            end
+            B_new = sum(B_element);
+            B_new = round(B_new, 8);
+            B(i,j,1) = B_new;
+        end
+    end
+end
+
+
+function [D] = D_matrix(Qbar_array, num_ply, zcubediff_list)
+    D = ones(3,3,1);
+    for i = 1:3 % calculate D matrix
+        for j = 1:3
+            D_element = [];
+            for z = 1:num_ply
+                D_part = (1/3) * Qbar_array(i,j,z) * (zcubediff_list(z));
+                D_element = [D_element, D_part];
+            end
+            D_new = sum(D_element);
+            D_new = round(D_new, 8);
+            D(i,j,1) = D_new;
+        end
+    end
+end
+
+
+function [lam_midstrains] = midPlain_strain(A,B,D,loads)
+    modulus_matrix = [A,B;B,D]; % combination of modulus matrices
+    lam_ek = (modulus_matrix^-1)*loads; % [exx,eyy,gammaxy,kxx,kyy,kxy]
+    lam_midstrains = lam_ek(1:3); % laminate mid-plain strain matrix 3x1
+end
+
+
+function [lam_curvatures] = curvatures(A,B,D,loads)
+    modulus_matrix = [A,B;B,D]; % combination of modulus matrices
+    lam_ek = (modulus_matrix^-1)*loads; % [exx,eyy,gammaxy,kxx,kyy,kxy]
+    lam_curvatures = lam_ek(4:6); % laminate curvature matrix 3x1
+end
+
+
+function [sig11_list, sig22_list, tau12_list] = local_stresses(num_ply,t_ply,lam_midstrains,lam_curvatures,Q,ply_orientations)
+    local_stresses = [];
+    for ply_iter = 1:num_ply
+        theta = ply_orientations(ply_iter);
+        Ts = [(cos(theta))^2 (sin(theta))^2 sin(theta)*cos(theta);
+        (sin(theta))^2 (cos(theta))^2 -sin(theta)*cos(theta);
+        -2*sin(theta)*cos(theta) 2*sin(theta)*cos(theta) ((cos(theta))^2)-(sin(theta))^2];
+        z_dist = (ply_iter - (num_ply+1)/2)* t_ply; % distance from midplane to desired ply
+        new_globalstrain = lam_midstrains + (z_dist * lam_curvatures); % ply strains        
+        new_localstrain = Ts * new_globalstrain; % calculate ply strain in local coordinates
+        new_localstress = Q * new_localstrain;
+        local_stresses = [local_stresses, new_localstress];
+    end    
+    sig11_list = [];
+    sig22_list = [];
+    tau12_list = [];
+    for i = 1:num_ply %sig11=row1, sig22=row2, tau12=row3, columns = ply
+        sig11_ply = local_stresses(1,i);
+        sig11_list = [sig11_list,sig11_ply];
+        sig22_ply = local_stresses(2,i);
+        sig22_list = [sig22_list,sig22_ply];
+        tau12_ply = local_stresses(3,i);
+        tau12_list = [tau12_list,tau12_ply];
+    end
+end
+
+
+function [R_value] = maxstress_failure(sig11,sig22,tau12,Slc,Slt,Stc,Stt,Slts)
+    R_list = []; %(R_sig11, R_negsig11)
+    if sig11 > 0
+        R_sig11 = Slt / sig11;
+        R_list = [R_list,R_sig11];
+    else
+        R_negsig11 = Slc / abs(sig11);
+        R_list = [R_list,R_negsig11];
+    end
+
+    if sig22 > 0
+        R_sig22 = Stt / sig22;
+        R_list = [R_list,R_sig22];
+    else 
+        R_negsig22 = Stc / abs(sig22);
+        R_list = [R_list,R_negsig22];
+    end
+
+    R_tau = abs(Slts) / abs(tau12);
+    R_list = [R_list,R_tau];
+    R_min = min(R_list);
+    R_value = R_min;
+end
+
+
+function [R_value] = tsai_wu(sig11,sig22,tau12,Slc,Slt,Stc,Stt,Slts)
+    F11 = 1/(Slt*Slc);
+    F22 = 1/(Stt*Stc);
+    F12 = (-0.5)*sqrt(F11*F22);
+    F66 = 1/(Slts^2);
+    F1 = (1/Slt)-(1/Slc);
+    F2 = (1/Stt)-(1/Stc);
+    a = (F11*(sig11^2))+(2*F12*sig11*sig22)+(F22*sig22^2)+(F66*(tau12^2));
+    b = (F1*sig11)+(F2*sig22);
+    c = -1;
+    Roots = roots([a, b, c]);
+    if Roots(1) > 0
+        R_value = Roots(1);
+    else
+        R_value = Roots(2);
+    end
+end
+
+
+function [R_min, min_idx, crit_Nxx, crit_Mxx] = crit_values(Rply_list,Nxx,Mxx)
+    [~, min_idx] = min(Rply_list); % the minimum R value from the laminate, and corresponding ply #
+    R_min = min(Rply_list);
+    crit_Nxx = Nxx * R_min;
+    crit_Mxx = Mxx * R_min;
+end
+
+
+function [] = display_output(num_ply,Rply_list,lam_ply,displam_ply, crit_Nxx, crit_Mxx, ply_iter)
+    ply_list = (1:num_ply); 
+    weakest_ply = find(Rply_list == min(Rply_list));
+    R_min = min(Rply_list);
+
+    for i = 1:num_ply
+        if ismember(ply_list(i), weakest_ply)
+            weakest_angle = lam_ply(i);
+        end
+    end
+
+    if length(weakest_ply) > 1
+        ply_display = [];
+        for i = 1:length(weakest_ply)
+            newply_display = weakest_ply(1,i);
+            ply_display = [ply_display, newply_display];
+        end
+    else
+        ply_display = [];
+        newply_display = weakest_ply;
+        ply_display = [ply_display, newply_display];
+    end
+
+    ply_display = num2str(ply_display);
+    disp(['Ply(s) ',ply_display,' has the minimum strength ratio of R=', num2str(R_min),' and orientation is ', num2str(weakest_angle),' degrees']);
+    disp(['Ply #: ', num2str(ply_list)]);
+    disp(['Ply R: ', num2str(Rply_list)]);
+    disp(['Ply Orientations: ', displam_ply]);
+    disp(['Critical Nxx:', num2str(crit_Nxx), ' lb/in'])
+    disp(['Critical Mxx: ', num2str(crit_Mxx), ' in-lb/in'])
+    disp(['COUNT:', num2str(ply_iter)])
+    disp('_____________________________________________________________')
+    disp('_____________________________________________________________')
+end
+
+
